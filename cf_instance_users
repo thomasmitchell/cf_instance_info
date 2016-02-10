@@ -1,0 +1,211 @@
+#!/bin/bash
+
+# Requires:
+#   cf_cli
+#   jq
+#   printf
+
+declare -r NumArgs=1
+declare -r InstanceGUIDHeader="INSTANCE GUID"
+declare -r OrgGUIDHeader="ORG GUID"
+declare -r OrgNameHeader="ORG NAME"
+declare -r SpaceGUIDHeader="SPACE GUID"
+declare -r SpaceNameHeader="SPACE NAME"
+declare -r AppGUIDHeader="APP GUID"
+declare -r AppNameHeader="APP NAME"
+declare Result=0
+declare -a Rows
+
+# Takes an instance ID and returns an array with the GUIDs for each app bound to this service instance.
+app_guids_bound_to()
+{
+  local _instanceID="$1"
+  if [[ -z ${_instanceID} ]]
+    then set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
+  fi
+  local guidRaw=$(cf curl "/v2/service_instances/${_instanceID}/service_bindings" | jq ".resources[].entity.app_guid" -Mr 2> /dev/null)
+  Result=$?
+  local -a _ret=()
+  while read guid
+  do
+    _ret+=("${guid}")
+  done <<<"${guidRaw}"
+  echo "${_ret[*]}"
+}
+
+#Takes an app GUID and returns that app's name
+app_name_with_guid()
+{
+  local _appID="$1"
+  if [[ -z ${_appID} ]]
+    then set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
+  fi
+  ret=$(cf curl "/v2/apps/${_appID}" | jq ".entity.name" -Mr)
+  Result=$?
+  echo "${ret}"
+}
+
+# Takes an instance GUID and returns the GUID of the space which this service instance exists in.
+space_guid_for_service_instance()
+{
+  local _instanceID="$1"
+  if [[ -z ${_instanceID} ]]
+    then set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
+  fi
+  ret=$(cf curl "/v2/service_instances/${_instanceID}" | jq ".entity.space_guid" -Mr)
+  Result=$?
+  echo "${ret}"
+}
+
+# Takes the GUID for a space and returns its name.
+space_name_with_guid()
+{
+  local _spaceID="$1"
+  if [[ -z ${_spaceID} ]]
+    then set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
+  fi
+  ret=$(cf curl "/v2/spaces/${_spaceID}" | jq ".entity.name" -Mr)
+  Result=$?
+  echo "${ret}"
+}
+
+# Takes a space guid and returns the GUID of the org which that space resides in.
+org_guid_for_space()
+{
+  local _spaceID="$1"
+  if [[ -z ${_spaceID} ]]
+  then
+    set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
+  fi
+  ret=$(cf curl "/v2/spaces/${_spaceID}" | jq ".entity.organization_guid" -Mr)
+  Result=$?
+  echo "${ret}"
+}
+
+# Takes an organization's GUID and returns its name
+org_name_with_guid()
+{
+  local _orgID="$1"
+  if [[ -z ${_orgID} ]]
+    then set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
+  fi
+  ret=$(cf curl "/v2/organizations/${_orgID}" | jq ".entity.name" -Mr)
+  Result=$?
+  echo "${ret}"
+}
+
+error_with()
+{
+  echo -e "\033[31m$1\033[0m" >&2 
+  exit 1
+}
+
+print_usage()
+{
+  echo -e "\
+  \033[35musage:
+      $0 <instance_id>+ | searches info for each whitespace separated GUID
+      $0 -f <filename>  | searches each newline separated GUID in the given file
+      $0 --help\033[0m
+  "
+  exit 0
+}
+
+print_orphaned_instances()
+{
+  local _instances=$1
+  if [[ -z ${_instances} ]]
+    then set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
+  fi
+  echo "The following instance IDs could be not be found:"
+  for instance in "$_instances"
+  do echo "${instance}"
+  done
+}
+
+main()
+{
+  if [[ "$1" == "-h" || "$1" == "--help" ]]
+    then print_usage
+  fi
+  local -a _orphanInstances
+  local _instanceGUID _spaceGUID _spaceName _orgGUID _orgName
+  local -a _inputs=()
+  #These three variables are for tracking required column length for printf
+  local _appLen="${#AppNameHeader}" _spaceLen="${#SpaceNameHeader}" _orgLen="${#OrgNameHeader}"
+  if [[ "$1" == "-f" || "$1" == "--file" ]]
+    then 
+      local filename="$2"
+      while read guid
+        do _inputs+=("${guid}")
+      done < "${filename}"
+  else
+    _inputs=$@
+  fi
+  for input in "${_inputs[@]}"
+  do
+    local _shouldContinue=false
+    local -a _appGUIDs=()
+    local -a _appNames=() 
+    _instanceGUID="${input}"
+    _appGUIDs=$(app_guids_bound_to "${_instanceGUID}")
+    if [[ (( $Result != 0 )) || (( ${#_appGUIDs[@]} == 0 )) ]]
+      then
+        _orphanInstances+=("${_instanceGUID}")
+        continue
+    fi
+
+    for guid in "${_appGUIDs[@]}"
+    do 
+      if [[ "${guid}" == "" ]]
+        then 
+          _orphanInstances+=("${_instanceGUID}")
+          _shouldContinue=true
+          break
+      fi
+
+      local _thisAppName="$(app_name_with_guid ${guid})"
+      if [[ $Result != 0 ]]
+        then 
+          _orphanInstances+=("${_instanceGUID}")
+          _shouldContinue=true
+          break
+      fi
+      _appNames+=("${_thisAppName}")
+      if (( "${#_thisAppName}" > "${_appLen}" ))
+        then _appLen="${#_thisAppName}"
+      fi
+    done
+    if [[ "${_shouldContinue}" == true ]]
+      then continue
+    fi
+    _spaceGUID=$(space_guid_for_service_instance "${_instanceGUID}")
+    _spaceName=$(space_name_with_guid "${_spaceGUID}")
+    if (( "${#_spaceName}" > "${_spaceLen}" ))
+      then _spaceLen="${#_spaceName}"
+    fi
+    _orgGUID=$(org_guid_for_space "${_spaceGUID}")
+    _orgName=$(org_name_with_guid "$_orgGUID")
+    if (( "${#_orgName}" > "${_orgLen}" ))
+      then _orgLen="${#_orgName}"
+    fi
+    Rows+=("${_instanceGUID} ${_orgGUID} ${_orgName} ${_spaceGUID} ${_spaceName} ${_appGUIDs[0]} ${_appNames[0]}")
+  done
+  # What did we find?
+  formatString="%36s | %36s | %${_orgLen}s | %36s | %${_spaceLen}s | %36s | %${_appLen}s\n"
+  printf "${formatString}" \
+    "${InstanceGUIDHeader}" "${OrgGUIDHeader}" "${OrgNameHeader}" \
+    "${SpaceGUIDHeader}" "${SpaceNameHeader}" "${AppGUIDHeader}" "${AppNameHeader}"
+  for row in "${Rows[@]}"
+    do printf "${formatString}" ${row}
+  done
+  # What couldn't we find?
+  if (( "${#_orphanInstances}" > 0 ))
+    then 
+      echo
+      print_orphaned_instances "${_orphanInstances[*]}"
+  fi
+}
+
+main $@
+
