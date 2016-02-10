@@ -16,21 +16,16 @@ declare -r AppNameHeader="APP NAME"
 declare Result=0
 declare -a Rows
 
-# Takes an instance ID and returns an array with the GUIDs for each app bound to this service instance.
+# Takes an instance ID and returns a newline separated list with the GUIDs for each app bound to this service instance.
 app_guids_bound_to()
 {
   local _instanceID="$1"
   if [[ -z ${_instanceID} ]]
     then set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
   fi
-  local guidRaw=$(cf curl "/v2/service_instances/${_instanceID}/service_bindings" | jq ".resources[].entity.app_guid" -Mr 2> /dev/null)
+  local ret=$(cf curl "/v2/service_instances/${_instanceID}/service_bindings" | jq ".resources[].entity.app_guid" -Mr 2> /dev/null)
   Result=$?
-  local -a _ret=()
-  while read guid
-  do
-    _ret+=("${guid}")
-  done <<<"${guidRaw}"
-  echo "${_ret[*]}"
+  echo "${ret}"
 }
 
 #Takes an app GUID and returns that app's name
@@ -113,12 +108,8 @@ print_usage()
 
 print_orphaned_instances()
 {
-  local _instances=$1
-  if [[ -z ${_instances} ]]
-    then set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
-  fi
   echo "The following instance IDs could be not be found:"
-  for instance in "$_instances"
+  for instance in "$@"
   do echo "${instance}"
   done
 }
@@ -140,7 +131,7 @@ main()
         do _inputs+=("${guid}")
       done < "${filename}"
   else
-    _inputs=$@
+    _inputs+=($@)
   fi
   for input in "${_inputs[@]}"
   do
@@ -148,13 +139,17 @@ main()
     local -a _appGUIDs=()
     local -a _appNames=() 
     _instanceGUID="${input}"
-    _appGUIDs=$(app_guids_bound_to "${_instanceGUID}")
+    local _appGUIDsRaw=$(app_guids_bound_to "${_instanceGUID}")
+    while read guid
+    do
+      _appGUIDs+=("${guid}")
+    done <<<"${_appGUIDsRaw}"
+
     if [[ (( $Result != 0 )) || (( ${#_appGUIDs[@]} == 0 )) ]]
       then
         _orphanInstances+=("${_instanceGUID}")
         continue
     fi
-
     for guid in "${_appGUIDs[@]}"
     do 
       if [[ "${guid}" == "" ]]
@@ -189,13 +184,24 @@ main()
     if (( "${#_orgName}" > "${_orgLen}" ))
       then _orgLen="${#_orgName}"
     fi
-    Rows+=("${_instanceGUID} ${_orgGUID} ${_orgName} ${_spaceGUID} ${_spaceName} ${_appGUIDs[0]} ${_appNames[0]}")
+    local i=0
+    for guid in "${_appGUIDs[@]}"
+    do
+      if [[ ${i} == 0 ]]
+      then 
+        Rows+=("${_instanceGUID} ${_orgGUID} ${_orgName} ${_spaceGUID} ${_spaceName} ${_appGUIDs[0]} ${_appNames[0]}")
+      else
+        Rows+=("^ ^ ^ ^ ^ ${_appGUIDs[${i}]} ${_appNames[${i}]}")
+      fi
+      i=$((i+1))
+    done
   done
   # What did we find?
   formatString="%36s | %36s | %${_orgLen}s | %36s | %${_spaceLen}s | %36s | %${_appLen}s\n"
   printf "${formatString}" \
     "${InstanceGUIDHeader}" "${OrgGUIDHeader}" "${OrgNameHeader}" \
     "${SpaceGUIDHeader}" "${SpaceNameHeader}" "${AppGUIDHeader}" "${AppNameHeader}"
+  
   for row in "${Rows[@]}"
     do printf "${formatString}" ${row}
   done
@@ -203,7 +209,7 @@ main()
   if (( "${#_orphanInstances}" > 0 ))
     then 
       echo
-      print_orphaned_instances "${_orphanInstances[*]}"
+      print_orphaned_instances "${_orphanInstances[@]}"
   fi
 }
 
