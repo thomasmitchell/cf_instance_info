@@ -15,6 +15,8 @@ declare -r AppGUIDHeader="APP GUID"
 declare -r AppNameHeader="APP NAME"
 declare Result=0
 declare -a Rows
+declare NumInstancesFound=0
+declare PrintJSON=false
 
 # Takes an instance ID and returns a newline separated list with the GUIDs for each app bound to this service instance.
 app_guids_bound_to()
@@ -99,10 +101,11 @@ print_usage()
 {
   echo -e "\
   \033[35musage:
-      $0 <instance_id>+ | searches info for each whitespace separated GUID
-      $0 -f <filename>  | searches each newline separated GUID in the given file
-      $0 --help\033[0m
-  "
+      $0 <options> <instance_ids>
+  options:
+      -f <filename> | searches each newline separated GUID in the file given
+                      after this argument
+      -j            | gives the output in json format\033[0m"
   exit 0
 }
 
@@ -124,15 +127,27 @@ main()
   local -a _inputs=()
   #These three variables are for tracking required column length for printf
   local _appLen="${#AppNameHeader}" _spaceLen="${#SpaceNameHeader}" _orgLen="${#OrgNameHeader}"
-  if [[ "$1" == "-f" || "$1" == "--file" ]]
-    then 
-      local filename="$2"
+  local _getFilename=false
+  for arg in $@
+  do
+    if [[ "${_getFilename}" == true ]]
+    then
+      local filename="${arg}"
       while read guid
         do _inputs+=("${guid}")
       done < "${filename}"
-  else
-    _inputs+=($@)
-  fi
+      _getFilename=false
+    elif [[ "${arg}" == "-j" || "${arg}" == "--json" ]]
+    then
+      PrintJSON=true 
+    elif [[ "${arg}" == "-f" || "${arg}" == "--file" ]]
+    then 
+      _getFilename=true
+    else
+      _inputs+=("${arg}")
+    fi
+  done
+  # Loop over each input instance_id, getting its information.
   for input in "${_inputs[@]}"
   do
     local _shouldContinue=false
@@ -140,15 +155,16 @@ main()
     local -a _appNames=() 
     _instanceGUID="${input}"
     local _appGUIDsRaw=$(app_guids_bound_to "${_instanceGUID}")
+    # Take the newline separated input and feed it into an array
     while read guid
     do
       _appGUIDs+=("${guid}")
     done <<<"${_appGUIDsRaw}"
-
+    # If something went wrong... or there aren't any apps.
     if [[ (( $Result != 0 )) || (( ${#_appGUIDs[@]} == 0 )) ]]
-      then
-        _orphanInstances+=("${_instanceGUID}")
-        continue
+    then
+      _orphanInstances+=("${_instanceGUID}")
+      continue
     fi
     for guid in "${_appGUIDs[@]}"
     do 
@@ -190,26 +206,64 @@ main()
       if [[ ${i} == 0 ]]
       then 
         Rows+=("${_instanceGUID} ${_orgGUID} ${_orgName} ${_spaceGUID} ${_spaceName} ${_appGUIDs[0]} ${_appNames[0]}")
+        NumInstancesFound=$(( NumInstancesFound + 1 ))
       else
         Rows+=("^ ^ ^ ^ ^ ${_appGUIDs[${i}]} ${_appNames[${i}]}")
       fi
       i=$((i+1))
     done
   done
-  # What did we find?
-  formatString="%36s | %36s | %${_orgLen}s | %36s | %${_spaceLen}s | %36s | %${_appLen}s\n"
-  printf "${formatString}" \
-    "${InstanceGUIDHeader}" "${OrgGUIDHeader}" "${OrgNameHeader}" \
-    "${SpaceGUIDHeader}" "${SpaceNameHeader}" "${AppGUIDHeader}" "${AppNameHeader}"
-  
-  for row in "${Rows[@]}"
-    do printf "${formatString}" ${row}
-  done
-  # What couldn't we find?
-  if (( "${#_orphanInstances}" > 0 ))
-    then 
-      echo
-      print_orphaned_instances "${_orphanInstances[@]}"
+
+  # Printing time.
+  if [[ "${PrintJSON}" == true ]]
+  then
+    # Format as JSON
+    printf "{ \"total_found\": %d, \"total_not_found\": %d, \"found\": [" "${NumInstancesFound}" "${#_orphanInstances[@]}"
+    local _separator=""
+    for row in "${Rows[@]}"
+    do
+      local _row=(${row})
+      # If this is a new instance id...
+      if [[ "${_row[0]}" != "^" ]]
+      then
+        printf "%s { \"instance_id\": \"%s\", \"org_id\": \"%s\", \"org_name\": \"%s\", \"space_id\": \"%s\", \"space_name\": \"%s\", \"apps\": [ { \"id\": \"%s\", \"name\": \"%s\" }" \
+          "${_separator}" "${_row[0]}" "${_row[1]}" "${_row[2]}" "${_row[3]}" "${_row[4]}" "${_row[5]}" "${_row[6]}"
+      else
+        # Otherwise, just add it to the app list.
+        printf ", { \"id\": \"%s\", \"name\": \"%s\" }" "${_row[5]}" "${_row[6]}"
+      fi
+      _separator="] }, "
+    done
+    if (( "${#Rows[@]}" > 0 ))
+    then printf "] }"
+    fi
+    printf "], \"not_found\": ["
+    _separator=""
+    for inst in "${_orphanInstances[@]}"
+    do
+      printf "%s \"%s\"" "${_separator}" "${inst}"
+      _separator=","
+    done
+    printf "] }" 
+  else
+    #TABLE FORMAT
+    # What did we find?
+    formatString="%36s | %36s | %${_orgLen}s | %36s | %${_spaceLen}s | %36s | %${_appLen}s\n"
+    printf "${formatString}" \
+      "${InstanceGUIDHeader}" "${OrgGUIDHeader}" "${OrgNameHeader}" \
+      "${SpaceGUIDHeader}" "${SpaceNameHeader}" "${AppGUIDHeader}" "${AppNameHeader}"
+    
+    for row in "${Rows[@]}"
+    do
+      local _row=(${row}) # No Quotes, using word splitting
+      printf "${formatString}" "${_row[@]}"
+    done 
+    # What couldn't we find?
+    if (( "${#_orphanInstances}" > 0 ))
+      then 
+        echo
+        print_orphaned_instances "${_orphanInstances[@]}"
+    fi
   fi
 }
 
