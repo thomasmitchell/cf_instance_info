@@ -21,6 +21,7 @@ declare -a AppGUIDs
 declare -a AppNames
 declare NumInstancesFound=0
 declare PrintJSON=false
+declare JQOptions="-r"
 
 # Takes an instance ID and returns a newline separated list with the GUIDs for each app bound to this service instance.
 app_guids_bound_to()
@@ -29,7 +30,7 @@ app_guids_bound_to()
   if [[ -z ${_instanceID} ]]
     then set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
   fi
-  local ret=$(cf curl "/v2/service_instances/${_instanceID}/service_bindings" | jq ".resources[].entity.app_guid" -Mr 2> /dev/null)
+  local ret=$(cf curl "/v2/service_instances/${_instanceID}/service_bindings" | jq ".resources[].entity.app_guid" "${JQOptions}" 2> /dev/null)
   Result=$?
   echo "${ret}"
 }
@@ -41,7 +42,7 @@ app_name_with_guid()
   if [[ -z ${_appID} ]]
     then set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
   fi
-  ret=$(cf curl "/v2/apps/${_appID}" | jq ".entity.name" -Mr)
+  ret=$(cf curl "/v2/apps/${_appID}" | jq ".entity.name" "${JQOptions}")
   Result=$?
   echo "${ret}"
 }
@@ -53,7 +54,7 @@ space_guid_for_service_instance()
   if [[ -z ${_instanceID} ]]
     then set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
   fi
-  ret=$(cf curl "/v2/service_instances/${_instanceID}" | jq ".entity.space_guid" -Mr)
+  ret=$(cf curl "/v2/service_instances/${_instanceID}" | jq ".entity.space_guid" "${JQOptions}")
   Result=$?
   echo "${ret}"
 }
@@ -65,7 +66,7 @@ space_name_with_guid()
   if [[ -z ${_spaceID} ]]
     then set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
   fi
-  ret=$(cf curl "/v2/spaces/${_spaceID}" | jq ".entity.name" -Mr)
+  ret=$(cf curl "/v2/spaces/${_spaceID}" | jq ".entity.name" "${JQOptions}")
   Result=$?
   echo "${ret}"
 }
@@ -78,7 +79,7 @@ org_guid_for_space()
   then
     set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
   fi
-  ret=$(cf curl "/v2/spaces/${_spaceID}" | jq ".entity.organization_guid" -Mr)
+  ret=$(cf curl "/v2/spaces/${_spaceID}" | jq ".entity.organization_guid" "${JQOptions}")
   Result=$?
   echo "${ret}"
 }
@@ -90,7 +91,7 @@ org_name_with_guid()
   if [[ -z ${_orgID} ]]
     then set -e; error_with "${FUNCNAME}:${LINENO}  No args given"
   fi
-  ret=$(cf curl "/v2/organizations/${_orgID}" | jq ".entity.name" -Mr)
+  ret=$(cf curl "/v2/organizations/${_orgID}" | jq ".entity.name" "${JQOptions}")
   Result=$?
   echo "${ret}"
 }
@@ -109,7 +110,8 @@ print_usage()
   options:
       -f <filename> | searches each newline separated GUID in the file given
                       after this argument
-      -j            | gives the output in json format\033[0m"
+      -j            | gives the output in json format
+      -M            | adds the -M tag to jq calls. Use with jq version >= 1.5\033[0m"
   exit 0
 }
 
@@ -147,6 +149,9 @@ main()
     elif [[ "${arg}" == "-f" || "${arg}" == "--file" ]]
     then 
       _getFilename=true
+    elif [[ "${arg}" == "-M" || "${arg}" == "--no-color" ]]
+    then
+      JQOptions="-Mr"
     else
       _inputs+=("${arg}")
     fi
@@ -226,7 +231,6 @@ main()
         SpaceNames+=("^")
         AppGUIDs+=(${_appGUIDs[${i}]})
         AppNames+=(${_appNames[${i}]})
-
       fi
       i=$((i+1))
     done
