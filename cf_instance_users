@@ -247,7 +247,7 @@ main()
     for row in "${InstanceGUIDs[@]}"
     do
       # If this is a new instance id...
-      if [[ "${row[${i}]}" != "^" ]]
+      if [[ "${InstanceGUIDs[${i}]}" != "^" ]]
       then
         printf "%s { \"instance_id\": \"%s\", \"org_id\": \"%s\", \"org_name\": \"%s\", \"space_id\": \"%s\", \"space_name\": \"%s\", \"apps\": [ { \"id\": \"%s\", \"name\": \"%s\" }" \
           "${_separator}" "${InstanceGUIDs[${i}]}" "${OrgGUIDs[${i}]}" "${OrgNames[${i}]}" "${SpaceGUIDs[${i}]}" "${SpaceNames[${i}]}" "${AppGUIDs[${i}]}" "${AppNames[${i}]}"
