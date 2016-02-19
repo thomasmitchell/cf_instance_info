@@ -5,7 +5,6 @@
 #   jq
 #   printf
 
-declare -r NumArgs=1
 declare -r InstanceGUIDHeader="INSTANCE GUID"
 declare -r OrgGUIDHeader="ORG GUID"
 declare -r OrgNameHeader="ORG NAME"
@@ -14,7 +13,12 @@ declare -r SpaceNameHeader="SPACE NAME"
 declare -r AppGUIDHeader="APP GUID"
 declare -r AppNameHeader="APP NAME"
 declare Result=0
-declare -a Rows
+declare -a OrgGUIDs
+declare -a OrgNames
+declare -a SpaceGUIDs
+declare -a SpaceNames
+declare -a AppGUIDs
+declare -a AppNames
 declare NumInstancesFound=0
 declare PrintJSON=false
 
@@ -205,10 +209,24 @@ main()
     do
       if [[ ${i} == 0 ]]
       then 
-        Rows+=("${_instanceGUID} ${_orgGUID} ${_orgName} ${_spaceGUID} ${_spaceName} ${_appGUIDs[0]} ${_appNames[0]}")
+        InstanceGUIDs+=("${_instanceGUID}")
+        OrgGUIDs+=("${_orgGUID}")
+        OrgNames+=("${_orgName}")
+        SpaceGUIDs+=("${_spaceGUID}")
+        SpaceNames+=("${_spaceName}")
+        AppGUIDs+=("${_appGUIDs[0]}")
+        AppNames+=("${_appNames[0]}")
         NumInstancesFound=$(( NumInstancesFound + 1 ))
       else
         Rows+=("^ ^ ^ ^ ^ ${_appGUIDs[${i}]} ${_appNames[${i}]}")
+        InstanceGUIDs+=("^")
+        OrgGUIDs+=("^")
+        OrgNames+=("^")
+        SpaceGUIDs+=("^")
+        SpaceNames+=("^")
+        AppGUIDs+=(${_appGUIDs[${i}]})
+        AppNames+=(${_appNames[${i}]})
+
       fi
       i=$((i+1))
     done
@@ -220,22 +238,26 @@ main()
     # Format as JSON
     printf "{ \"total_found\": %d, \"total_not_found\": %d, \"found\": [" "${NumInstancesFound}" "${#_orphanInstances[@]}"
     local _separator=""
-    for row in "${Rows[@]}"
+    local _numApps=0
+    i=0
+    for row in "${InstanceGUIDs[@]}"
     do
-      local _row=(${row})
       # If this is a new instance id...
-      if [[ "${_row[0]}" != "^" ]]
+      if [[ "${row[${i}]}" != "^" ]]
       then
         printf "%s { \"instance_id\": \"%s\", \"org_id\": \"%s\", \"org_name\": \"%s\", \"space_id\": \"%s\", \"space_name\": \"%s\", \"apps\": [ { \"id\": \"%s\", \"name\": \"%s\" }" \
-          "${_separator}" "${_row[0]}" "${_row[1]}" "${_row[2]}" "${_row[3]}" "${_row[4]}" "${_row[5]}" "${_row[6]}"
+          "${_separator}" "${InstanceGUIDs[${i}]}" "${OrgGUIDs[${i}]}" "${OrgNames[${i}]}" "${SpaceGUIDs[${i}]}" "${SpaceNames[${i}]}" "${AppGUIDs[${i}]}" "${AppNames[${i}]}"
+        _numApps=1
       else
         # Otherwise, just add it to the app list.
-        printf ", { \"id\": \"%s\", \"name\": \"%s\" }" "${_row[5]}" "${_row[6]}"
+        printf ", { \"id\": \"%s\", \"name\": \"%s\" }" "${AppGUIDs[${i}]}" "${AppNames[${i}]}"
+        _numApps=$(( _numApps + 1 ))
       fi
-      _separator="] }, "
+      _separator="], \"total_apps\": ${_numApps}}, "
+      i=$((i+1))
     done
-    if (( "${#Rows[@]}" > 0 ))
-    then printf "] }"
+    if (( "${#InstanceGUIDs[@]}" > 0 ))
+    then printf "], \"total_apps\":${_numApps}}"
     fi
     printf "], \"not_found\": ["
     _separator=""
@@ -252,11 +274,11 @@ main()
     printf "${formatString}" \
       "${InstanceGUIDHeader}" "${OrgGUIDHeader}" "${OrgNameHeader}" \
       "${SpaceGUIDHeader}" "${SpaceNameHeader}" "${AppGUIDHeader}" "${AppNameHeader}"
-    
-    for row in "${Rows[@]}"
+    i=0
+    for row in "${InstanceGUIDs[@]}"
     do
-      local _row=(${row}) # No Quotes, using word splitting
-      printf "${formatString}" "${_row[@]}"
+      printf "${formatString}" "${InstanceGUIDs[${i}]}" "${OrgGUIDs[${i}]}" "${OrgNames[${i}]}" "${SpaceGUIDs[${i}]}" "${SpaceNames[${i}]}" "${AppGUIDs[${i}]}" "${AppNames[${i}]}" 
+      i=$((i+1)) 
     done 
     # What couldn't we find?
     if (( "${#_orphanInstances}" > 0 ))
